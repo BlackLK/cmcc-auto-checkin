@@ -1,0 +1,99 @@
+# 中国移动 App 自动签到（签到领流量/话费）
+
+基于抓包逆向的中国移动 App「网签领流量」H5 活动自动签到脚本。
+单文件 Python，仅依赖 `requests`。
+
+## 文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `cmcc_sign.py` | 主脚本 |
+| `config.example.json` | 配置模板，复制为 `config.json` 后填写 |
+| `.cmcc_jwt_cache.json` | 运行后自动生成的 jwt 缓存（勿外传） |
+
+## 快速开始
+
+```bash
+pip3 install requests
+cp config.example.json config.json   # 填入自己的 app_token 和手机号
+python3 cmcc_sign.py                 # 签到
+python3 cmcc_sign.py --dry-run       # 只查状态
+python3 cmcc_sign.py --claim         # 签到后顺带尝试领连签奖励
+python3 cmcc_sign.py --delay 600     # 随机延迟 0~600 秒执行（防风控）
+```
+
+配置也可用环境变量覆盖（适合 CI）：`CMCC_APP_TOKEN`、`CMCC_PHONE`、
+`CMCC_PROVINCE_CODE`、`CMCC_CITY_CODE`、`CMCC_ACTIVITY_ID` 等。
+
+## 如何获取 app_token（凭证）
+
+1. 手机装抓包工具（Proxyman / Charles / Stream 等），对 App 开启 SSL 抓包；
+2. 打开中国移动 App → 我的 → 签到领流量 进入签到页；
+3. 在抓包记录中找到 `wx.10086.cn/qwhdsso/appTokenLogin` 这条 POST 请求；
+4. 复制请求体里 `token` 字段的完整值（形如
+   `JSESSIONID=xxxx; UID=xxxx; Comment=...; ticketID=NingBo`）填入配置。
+
+省编码 `provinceCode`、市编码 `cityCode` 也在同一条请求体里，一并照抄。
+`app_token` 属于账号登录凭证，**只在本地使用，不要提交到公开仓库**。
+它失效（一般数天到数周）后脚本会报 `appTokenLogin 失败`，重新抓包更新即可。
+
+## 定时执行
+
+### macOS launchd / crontab
+
+```bash
+crontab -e
+# 每天早上 8 点 23 分执行（避开整点）
+23 8 * * * cd /path/to/qiandao.folder && /usr/bin/python3 cmcc_sign.py --delay 1800 >> sign.log 2>&1
+```
+
+### GitHub Actions
+
+`.github/workflows/sign.yml`：
+
+```yaml
+name: cmcc-sign
+on:
+  schedule:
+    - cron: "37 0 * * *"   # UTC 时间，对应北京时间 8:37（分钟避开整点）
+  workflow_dispatch:
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests
+      - run: python cmcc_sign.py --delay 3600
+        env:
+          CMCC_APP_TOKEN: ${{ secrets.CMCC_APP_TOKEN }}
+          CMCC_PHONE: ${{ secrets.CMCC_PHONE }}
+          CMCC_SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}  # 可选
+```
+
+## 通知（可选）
+
+- **Server酱**：填 `serverchan_sendkey`，签到结果推送到微信；
+- **Bark**（iOS）：填 `bark_url`（形如 `https://api.day.app/你的key`）。
+
+## 实现说明（接口链路）
+
+```
+GET  /qwhdsso/login?actUrl=<活动页>          → 提取一次性 sid
+POST /qwhdsso/appTokenLogin?sid=...          → {token:App票据,...} 换取跳转 URL
+GET  <活动页?token=QWHDSSOD...>              → Set-Cookie: QWHD_SESSION_TOKEN(30分钟)
+POST /qwhdhub/api/mark/mark31/markstatus {}  → 查签到状态（幂等）
+POST /qwhdhub/api/mark/mark31/domark         → {"date":"YYYYMMDD"} 执行签到
+POST /qwhdhub/api/mark/mark31/taskAward/<id> → 领连签奖励（--claim）
+```
+
+已知坑（脚本内已处理）：
+
+- **TLS 套件**：wx.10086.cn 网关只接受老式 TLS 套件（ECDHE-RSA-AES128-SHA），
+  Python 默认现代套件会握手失败，脚本挂载了自定义 SSL 适配器；
+- **系统代理**：本机开着抓包/代理工具时证书会被 MITM，脚本已禁用代理继承直连；
+- **请求头**：UA 需含 `leadeon`，API 需带 `login-check: 1` 与 `x-requested-with`；
+- `domark` 返回 `code=SUCCESS` + `status=PRIZE_NO_CONFIG` 表示签到成功、当日无单日奖品。
+
+仅供个人号码自动化签到使用，请勿高频调用或用于批量账号。

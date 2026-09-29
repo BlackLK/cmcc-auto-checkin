@@ -1,0 +1,18 @@
+# 抓包记录（含手机号/票据等敏感信息，永久不入库）
+*.txt
+
+# Mimosa 扫描工具本地状态
+.mimosa/
+
+# 真实凭证与运行时产物
+config.json
+.cmcc_jwt_cache.json
+sign.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
