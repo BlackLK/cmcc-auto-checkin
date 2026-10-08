@@ -11,8 +11,43 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt
-      - run: python cmcc_sign.py --delay 3600
+      - name: cmcc sign
+        run: |
+          set -o pipefail
+          python cmcc_sign.py --delay 3600 2>&1 | tee sign.log
         env:
           CMCC_APP_TOKEN: ${{ secrets.CMCC_APP_TOKEN }}
           CMCC_PHONE: ${{ secrets.CMCC_PHONE }}
+          CMCC_PROVINCE_CODE: ${{ secrets.CMCC_PROVINCE_CODE }}
+          CMCC_CITY_CODE: ${{ secrets.CMCC_CITY_CODE }}
           CMCC_BARK_URL: ${{ secrets.CMCC_BARK_URL }}
+      - name: DingTalk notify
+        if: always()
+        shell: python
+        run: |
+          import base64, hashlib, hmac, os, time, urllib.parse
+          import requests
+          webhook = os.environ.get("DINGTALK_WEBHOOK", "")
+          if not webhook:
+              print("DINGTALK_WEBHOOK not set, skip")
+              raise SystemExit(0)
+          secret = os.environ.get("DINGTALK_SECRET", "")
+          if secret:
+              ts = str(round(time.time() * 1000))
+              digest = hmac.new(secret.encode(), (ts + chr(10) + secret).encode(), hashlib.sha256).digest()
+              webhook = webhook + "&timestamp=" + ts + "&sign=" + urllib.parse.quote_plus(base64.b64encode(digest))
+          status = os.environ.get("JOB_STATUS", "unknown")
+          try:
+              log = open("sign.log", encoding="utf-8", errors="replace").read()[-1200:]
+          except OSError:
+              log = "(no log)"
+          NL = chr(10)
+          text = "### 中国移动签到 " + status + NL + "```" + NL + log + NL + "```" + NL + "[查看运行](" + os.environ.get("RUN_URL", "") + ")"
+          r = requests.post(webhook, json={"msgtype": "markdown", "markdown": {"title": "中国移动签到", "text": text}}, timeout=15)
+          print(r.text)
+          r.raise_for_status()
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.CMCC_DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.CMCC_DINGTALK_SECRET }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
