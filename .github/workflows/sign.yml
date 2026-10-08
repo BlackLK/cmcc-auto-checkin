@@ -3,6 +3,10 @@ on:
   schedule:
     - cron: "37 0 * * *"   # UTC，对应北京时间 8:37（避开整点）
   workflow_dispatch:
+    inputs:
+      delay:
+        description: "随机延迟秒数（定时任务用 3600 防风控，测试可设小值）"
+        default: "3600"
 jobs:
   sign:
     runs-on: ubuntu-latest
@@ -14,7 +18,7 @@ jobs:
       - name: cmcc sign
         run: |
           set -o pipefail
-          python cmcc_sign.py --delay 3600 2>&1 | tee sign.log
+          python cmcc_sign.py --delay ${{ github.event.inputs.delay || 3600 }} 2>&1 | tee sign.log
         env:
           CMCC_APP_TOKEN: ${{ secrets.CMCC_APP_TOKEN }}
           CMCC_PHONE: ${{ secrets.CMCC_PHONE }}
