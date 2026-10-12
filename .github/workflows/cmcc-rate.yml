@@ -1,0 +1,59 @@
+name: cmcc-rate
+on:
+  schedule:
+    - cron: "33 23 * * *"   # UTC 23:33 = 北京时间早上 7:33（评价有礼，按周幂等，攒够自动兑）
+  workflow_dispatch:
+jobs:
+  rate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: persist jwt cache
+        uses: actions/cache@v4
+        with:
+          path: .cmcc_jwt_cache_*.json
+          key: cmcc-jwt-${{ secrets.CMCC_PHONE }}-${{ github.run_id }}
+          restore-keys: |
+            cmcc-jwt-${{ secrets.CMCC_PHONE }}-
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - name: cmcc rate
+        run: |
+          set -o pipefail
+          python cmcc_rate.py --exchange 2>&1 | tee rate.log
+        env:
+          CMCC_APP_TOKEN: ${{ secrets.CMCC_APP_TOKEN }}
+          CMCC_PHONE: ${{ secrets.CMCC_PHONE }}
+          CMCC_PROVINCE_CODE: ${{ secrets.CMCC_PROVINCE_CODE }}
+          CMCC_CITY_CODE: ${{ secrets.CMCC_CITY_CODE }}
+      - name: DingTalk notify
+        if: always()
+        shell: python
+        run: |
+          import base64, hashlib, hmac, os, time, urllib.parse
+          import requests
+          webhook = os.environ.get("DINGTALK_WEBHOOK", "")
+          if not webhook:
+              print("DINGTALK_WEBHOOK not set, skip")
+              raise SystemExit(0)
+          secret = os.environ.get("DINGTALK_SECRET", "")
+          if secret:
+              ts = str(round(time.time() * 1000))
+              digest = hmac.new(secret.encode(), (ts + chr(10) + secret).encode(), hashlib.sha256).digest()
+              webhook = webhook + "&timestamp=" + ts + "&sign=" + urllib.parse.quote_plus(base64.b64encode(digest))
+          status = os.environ.get("JOB_STATUS", "unknown")
+          try:
+              log = open("rate.log", encoding="utf-8", errors="replace").read()[-1200:]
+          except OSError:
+              log = "(no log)"
+          NL = chr(10)
+          text = "### 中国移动评价有礼 " + status + NL + "```" + NL + log + NL + "```" + NL + "[查看运行](" + os.environ.get("RUN_URL", "") + ")"
+          r = requests.post(webhook, json={"msgtype": "markdown", "markdown": {"title": "中国移动签到", "text": text}}, timeout=15)
+          print(r.text)
+          r.raise_for_status()
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.CMCC_DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.CMCC_DINGTALK_SECRET }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
