@@ -25,7 +25,7 @@ jobs:
       - name: cmcc sign
         run: |
           set -o pipefail
-          python cmcc_sign.py --delay ${{ github.event.inputs.delay || 3600 }} 2>&1 | tee sign.log
+          python cmcc_sign.py --claim --tasks --games --delay ${{ github.event.inputs.delay || 3600 }} 2>&1 | tee sign.log
         env:
           CMCC_APP_TOKEN: ${{ secrets.CMCC_APP_TOKEN }}
           CMCC_PHONE: ${{ secrets.CMCC_PHONE }}
